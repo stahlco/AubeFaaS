@@ -1,8 +1,10 @@
 FROM python:3.11-alpine
 
+EXPOSE 8001
+
 RUN pip install websockets
 
-COPY functionhandler.py /usr/src/app/
+COPY ./functionhandler.py /usr/src/app/
 
 WORKDIR /usr/src/app
 
