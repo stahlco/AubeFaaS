@@ -14,7 +14,7 @@ The Aube (French pronunciation: [ob]) is a river in France, a right tributary of
 
 ```shell
 # To Bridge the messages -> Only required on macOS (bridges from OS -> Linux VM in which Docker runs)
-sude docker-mac-net-connect
+sudo docker-mac-net-connect
 ```
 
 ---
