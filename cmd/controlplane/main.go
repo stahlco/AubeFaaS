@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	ConfigPort          = 8080
-	RProxyConfigPort    = 8081
+	ConfigPort          = 8090
+	RProxyConfigPort    = 8091
 	RProxyListenAddress = "localhost"
 )
 
@@ -78,14 +78,14 @@ func main() {
 	go func() {
 		s := bufio.NewScanner(stdout)
 		for s.Scan() {
-			fmt.Printf(s.Text())
+			fmt.Println(s.Text())
 		}
 	}()
 
 	go func() {
 		s := bufio.NewScanner(stderr)
 		for s.Scan() {
-			fmt.Printf(s.Text())
+			fmt.Println(s.Text())
 		}
 	}()
 
@@ -131,6 +131,13 @@ func main() {
 		}
 		os.Exit(0)
 	}()
+
+	log.Printf("starting HTTP-server")
+	addr := fmt.Sprintf(":%d", ConfigPort)
+	err = http.ListenAndServe(addr, r)
+	if err != nil {
+		log.Printf("starting the server failed with error: %v", err)
+	}
 }
 
 func (s *server) uploadHandler(w http.ResponseWriter, req *http.Request) {
