@@ -21,7 +21,7 @@ sudo docker-mac-net-connect
 ### Testing
 
 ```shell
-cd pkg/runtimes/python
+cd pkg/docker/python
 just start
 ```
 

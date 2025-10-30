@@ -4,11 +4,11 @@ EXPOSE 8001
 
 RUN pip install websockets
 
-COPY ./functionhandler.py /usr/src/app/
+COPY functionhandler.py /usr/src/app/
 
 WORKDIR /usr/src/app
 
-COPY fn/ ./fn/
+COPY fn ./fn/
 
 RUN pip install -r fn/requirements.txt
 
