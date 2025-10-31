@@ -3,6 +3,7 @@ package main
 import (
 	"aube/pkg/controlplane"
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -43,6 +44,9 @@ func main() {
 
 	id := uuid.New().String()
 
+	// Creating Docker backend for the functions
+
+	// Creating reverse proxy
 	rProxyDir := path.Join(os.TempDir(), id)
 
 	err := os.MkdirAll(rProxyDir, 0755)
@@ -111,6 +115,7 @@ func main() {
 	r := http.NewServeMux()
 	r.HandleFunc("/upload", s.uploadHandler)
 	r.HandleFunc("/delete", s.deleteHandler)
+	r.HandleFunc("/update", s.updateHandler)
 
 	// Shutdown-Hook
 	sig := make(chan os.Signal, 1)
@@ -141,11 +146,69 @@ func main() {
 }
 
 func (s *server) uploadHandler(w http.ResponseWriter, req *http.Request) {
-	// Will add functionality later
-	w.WriteHeader(http.StatusNotImplemented)
+
+	if req.Method != http.MethodPost {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	d := struct {
+		FunctionName string `json:"name"`
+		FunctionZip  string `json:"zip"`
+	}{}
+
+	err := json.NewDecoder(req.Body).Decode(&d)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		log.Printf("could not decode request: %v", err)
+		return
+	}
+
+	log.Printf("received request to upload function: Name %s Bytes: %d", d.FunctionName, len(d.FunctionZip))
+
+	res, err := s.cp.Upload(d.FunctionName, d.FunctionZip)
+	if err != nil {
+		log.Printf("Not able to upload function")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, res)
 }
 
 func (s *server) deleteHandler(w http.ResponseWriter, req *http.Request) {
 	// Will add functionality later
 	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// updateHandler allows the RProxy to inform Backend to scale out/in a specific function.
+// A function has n Containers, each for a single tenant. If there are 1 > free functions, the RProxy will spawn new container
+func (s *server) updateHandler(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		log.Printf("received bad request from rproxy to update already function")
+		w.WriteHeader(http.StatusBadRequest)
+	}
+
+	d := struct {
+		FunctionName string `json:"name"`
+		Amount       int    `json:"amount"`
+	}{}
+
+	err := json.NewDecoder(req.Body).Decode(&d)
+	if err != nil {
+		log.Printf("not able to decode request body: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	res, err := s.cp.Update(d.FunctionName, d.Amount)
+	if err != nil {
+		log.Printf("not able to update function: %s with error: %v", d.FunctionName, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, res)
 }
