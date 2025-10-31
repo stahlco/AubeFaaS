@@ -28,6 +28,7 @@ func New() *RProxy {
 
 // Add takes a container name and an ip-addr of a specific function
 func (r *RProxy) Add(name string, ip string) error {
+
 	r.hl.Lock()
 	defer r.hl.Unlock()
 

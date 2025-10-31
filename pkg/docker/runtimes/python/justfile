@@ -1,5 +1,0 @@
-#!/usr/bin/env just --justfile
-
-start:
-    docker build -t test-ws-fn -f Dockerfile .
-    docker run -p 8001:8001 test-ws-fn

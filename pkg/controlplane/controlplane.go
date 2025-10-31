@@ -185,3 +185,7 @@ func (cp *ControlPlane) Upload(name string, zippedString string) (string, error)
 
 	return r, nil
 }
+
+func (cp *ControlPlane) Update(name string, amount int) ([]string, error) {
+	return nil, nil
+}

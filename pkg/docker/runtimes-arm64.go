@@ -5,7 +5,7 @@ package docker
 
 import "embed"
 
-//go:embed python-arm64
-var python embed.FS
+//go:embed runtimes-arm64
+var runtimes embed.FS
 
-const runtimesDir = "python-arm64"
+const runtimesDir = "runtimes-arm64"
