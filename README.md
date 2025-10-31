@@ -17,12 +17,16 @@ The Aube (French pronunciation: [ob]) is a river in France, a right tributary of
 sudo docker-mac-net-connect
 ```
 
----
-### Testing
-
+**Start the 'static' Function:**
 ```shell
-cd pkg/docker/python
+cd pkg/docker/runtimes/python
 just start
+```
+
+**Start the Control-Plane and the Reverse Proxy:**
+```shell
+# Please execute this command in the root-directory of the project
+make start 
 ```
 
 ---
