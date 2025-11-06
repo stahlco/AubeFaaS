@@ -1,7 +1,6 @@
 # AubeFaaS
 
 The Aube (French pronunciation: [ob]) is a river in France, a right tributary of the Seine, and a Function-as-a-Service Plattform optimized for Streaming Operations.
-
 ---
 ### Prerequisites:
 - Go 1.23 >=
@@ -29,4 +28,17 @@ just start
 make start 
 ```
 
+**Upload a Function**
+
+```shell
+sh ./scripts/upload.sh <folder-name> <name>
+```
+Example:
+```shell
+sh ./scripts/upload.sh ./test/fn test_function
+```
+
 ---
+# Architecture
+
+![architecture.svg](resources/architecture.svg)
