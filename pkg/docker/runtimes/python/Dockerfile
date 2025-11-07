@@ -1,15 +1,14 @@
-FROM python:3.11-alpine
+FROM scratch
 
-EXPOSE 8001
+ADD blob.tar.gz /
 
-RUN pip install websockets
+EXPOSE 8000
 
-COPY functionhandler.py /usr/src/app/
-
+# Create app directory
 WORKDIR /usr/src/app
 
-COPY fn ./fn/
+COPY fn/* ./
+RUN python -m pip install -r requirements.txt --user
 
-RUN pip install -r fn/requirements.txt
-
-CMD ["python3", "functionhandler.py"]
+ENV PYTHONUNBUFFERED=1
+CMD [ "python3", "functionhandler.py" ]

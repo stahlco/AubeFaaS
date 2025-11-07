@@ -57,11 +57,16 @@ func CopyFileFromEmbed(src embed.FS, srcPath string, dstPath string) (err error)
 }
 
 func CopyDirFromEmbed(src embed.FS, srcPath string, dstPath string) (err error) {
+	log.Printf("Received Source Path: %s and Destination Path: %s", srcPath, dstPath)
+
 	entries, err := fs.ReadDir(src, srcPath)
 
 	if err != nil {
-		return
+		log.Printf("Error directly after")
+		return err
 	}
+
+	log.Printf("Entries: %+v", entries)
 
 	err = os.MkdirAll(dstPath, 0755)
 	if err != nil {

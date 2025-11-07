@@ -135,6 +135,8 @@ func (cp *ControlPlane) createFunction(name string, fnzip []byte, subfolderPath 
 		return "", err
 	}
 
+	log.Printf("DEBUG: Created function handler: %+v (should not have IPs for now)", fh)
+
 	cp.FunctionHandlers[name] = fh
 
 	err = cp.FunctionHandlers[name].Start()
