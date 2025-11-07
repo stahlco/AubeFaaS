@@ -4,7 +4,7 @@ from websockets.sync.server import serve
 if __name__ == "__main__":
     # Import the function
     try:
-        from fn.fn import fn
+        from test.fn.fn import fn
     except ImportError:
         raise ImportError("Failed to import fn.py")
 

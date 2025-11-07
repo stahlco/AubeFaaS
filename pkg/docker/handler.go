@@ -10,6 +10,8 @@ import (
 	"log"
 	"os"
 	"path"
+	"slices"
+	"sync"
 
 	uuid2 "github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
@@ -17,174 +19,303 @@ import (
 )
 
 const (
-	TmpDir           = "./tmp"
-	containerTimeout = 1
+	TmpDir = "./tmp"
 )
 
-type dockerHandler struct {
-	name       string
-	threads    int
-	client     *client.Client
-	filePath   string
-	uniqueName string
-	network    string
-	// Define how many containers per function -> Users per function
-	containers []string
-	handlerIPs []string
-}
-
 type DockerBackend struct {
+	id     string
 	client *client.Client
 }
 
-func (db *DockerBackend) Create(name string, filedir string) (controlplane.Handler, error) {
+// Each dockerHandler represents a single function with n containers
+type dockerHandler struct {
+	name        string
+	uniqueName  string // Determines Image and Network as well
+	initThreads int
+	maxThreads  int
+	filePath    string
+	// Docker specific stuff -> needed to create or remove containers
+	client          *client.Client
+	containers      []string
+	containerIPs    []string
+	network         string
+	containerConfig *container.Config
+	hostConfig      *container.HostConfig
+}
+
+func New(aubeFaaSID string) (*DockerBackend, error) {
+	id := "AubeFaaS-" + aubeFaaSID
+
+	c, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, err
+	}
+
+	return &DockerBackend{
+		id:     id,
+		client: c,
+	}, nil
+}
+
+// Create creates a new function with function-name: name in the file-directory
+// filedir must include ./fn.py and ./requirements -> this will be loaded into to the container
+// filedir would be: ./test/fn
+func (d DockerBackend) Create(name string, filedir string, initThreads int, maxThreads int) (controlplane.Handler, error) {
+
+	// Create a new unique function name
 	uuid, err := uuid2.NewRandom()
 	if err != nil {
 		return nil, err
 	}
 
-	// A single handler represent a single function -> maybe one
-	dh := &dockerHandler{
-		name:       name,
-		threads:    1,
-		client:     db.client,
-		containers: make([]string, 0), //unbounded to enable scaling each fn
-		handlerIPs: make([]string, 0), //
+	uniqueName := name + "-" + uuid.String()
+
+	handler := &dockerHandler{
+		name:         name,
+		uniqueName:   uniqueName,
+		client:       d.client,
+		initThreads:  initThreads,
+		maxThreads:   maxThreads,
+		containers:   make([]string, 0, maxThreads),
+		containerIPs: make([]string, 0, maxThreads),
 	}
 
-	dh.uniqueName = name + "-" + uuid.String()
-	log.Printf("creating function %s with unique name %s", name, uuid.String())
-
-	// copy the Docker runtime into folder
-	// cp runtimes/python/* <folder>
-	dh.filePath = path.Join(TmpDir, dh.uniqueName)
-	err = os.MkdirAll(dh.filePath, 0777)
+	// Copy the Docker-Runtime into a folder
+	// cp runtimes/python/* ./tmp/<uniqueName>
+	handler.filePath = path.Join(TmpDir, handler.uniqueName)
+	err = os.MkdirAll(handler.filePath, 0777)
 	if err != nil {
-		log.Printf("creating folder for function %s failed with error: %v", name, err)
 		return nil, err
 	}
 
-	err = util.CopyDirFromEmbed(runtimes, path.Join(runtimesDir, "python"), dh.filePath)
+	srcPath := path.Join(runtimesDir, "python")
+	err = util.CopyDirFromEmbed(runtimes, srcPath, handler.filePath)
 	if err != nil {
-		log.Printf("copying runtime files to folder %s failed with error: %v", dh.filePath, err)
+		log.Printf("copying embed filesystem (python-runtime) into function failed with err: %v", err)
 		return nil, err
 	}
 
-	// copy the function into the folder
-	// cp <file> <folder>/fn
-	err = os.MkdirAll(path.Join(dh.filePath, "fn"), 0777)
+	// Copy function-code into the runtime
+	// cp <filedir> <folder>/fn
+
+	functionFilePath := path.Join(handler.filePath, "fn")
+	err = os.MkdirAll(functionFilePath, 0777)
 	if err != nil {
 		log.Printf("creating folder for function failed with err: %v", err)
 		return nil, err
 	}
 
-	err = util.CopyAll(filedir, path.Join(dh.filePath, "fn"))
+	err = util.CopyAll(filedir, functionFilePath)
 	if err != nil {
-		log.Printf("copying function into folder failed with error: %v", err)
+		log.Printf("copying function code into fn-folder failed with err: %v", err)
 		return nil, err
 	}
 
-	// Test without a build.Dockerfile (no blob.tar.gz)
-	opt := client.ImageBuildOptions{
-		Tags:       []string{dh.uniqueName},
-		Remove:     true,
+	// Creating a Docker Image
+	imageBuildOpts := client.ImageBuildOptions{
+		Tags:       []string{handler.uniqueName},
 		Dockerfile: "Dockerfile",
+		Remove:     true,
 		Labels: map[string]string{
-			"aubefaas-function": dh.name,
-			"AubeFaaS":          "AubeFaaS-Test",
+			"AubeFaaS-Function": handler.uniqueName,
+			"AubeFaaS-ID":       d.id,
 		},
 	}
 
-	r, err := db.client.ImageBuild(context.Background(), nil, opt)
+	imageResp, err := handler.client.ImageBuild(context.Background(), nil, imageBuildOpts)
 	if err != nil {
-		log.Printf("building image based on opt: %+v, with error: %v", opt, err)
 		return nil, err
 	}
-	defer r.Body.Close()
-	scanner := bufio.NewScanner(r.Body)
+	defer imageResp.Body.Close()
+	// Reading Body from Image Creation
+	scanner := bufio.NewScanner(imageResp.Body)
 	for scanner.Scan() {
-		log.Println("scanner: ", scanner.Text())
+		log.Printf("scanner" + scanner.Text())
 	}
 
-	nwOpt := client.NetworkCreateOptions{
+	networkOpts := client.NetworkCreateOptions{
 		Labels: map[string]string{
-			"aubefaas-function": dh.name,
-			"AubeFaaS":          "AubeFaaS-Test",
+			"AubeFaaS-Function": handler.name,
+			"AubeFaaS-ID":       d.id,
 		},
 	}
 
-	// Create Network
-	nw, err := db.client.NetworkCreate(context.Background(), dh.uniqueName, nwOpt)
+	nw, err := handler.client.NetworkCreate(context.Background(), handler.uniqueName, networkOpts)
 	if err != nil {
-		log.Printf("creating docker network failed with error: %v", err)
 		return nil, err
 	}
 
-	dh.network = nw.ID
-	log.Printf("create network %s, with id: %s", dh.uniqueName, nw.ID)
+	handler.network = nw.ID
 
-	containerCfg := &container.Config{
-		Image: dh.uniqueName,
+	containerConfig := &container.Config{
+		Image: handler.uniqueName,
 		Labels: map[string]string{
-			"aubefaas-function": dh.name,
-			"AubeFaaS":          "AubeFaaS-Test",
+			"AubeFaaS-Function": handler.uniqueName,
+			"AubeFaaS-ID":       d.id,
 		},
 	}
 
-	hostCfg := &container.HostConfig{
-		NetworkMode: container.NetworkMode(dh.uniqueName),
+	handler.containerConfig = containerConfig
+
+	hostConfig := &container.HostConfig{
+		NetworkMode: container.NetworkMode(handler.uniqueName),
 	}
 
-	for i := 0; i < dh.threads; i++ {
-		c, err := db.client.ContainerCreate(
+	handler.hostConfig = hostConfig
+
+	err = createContainer(handler, initThreads)
+	if err != nil {
+		return nil, err
+	}
+
+	return handler, nil
+}
+
+func createContainer(handler *dockerHandler, amount int) error {
+
+	if curr := len(handler.containers); (curr + amount) > handler.maxThreads {
+		amount = handler.maxThreads - curr
+		log.Printf("Not able to create more than %d container because it would exceed the upper resource bound", amount)
+	}
+
+	for i := 0; i < amount; i++ {
+		idx := len(handler.containers)
+
+		c, err := handler.client.ContainerCreate(
 			context.Background(),
-			containerCfg,
-			hostCfg,
+			handler.containerConfig,
+			handler.hostConfig,
 			nil,
 			nil,
-			dh.uniqueName+fmt.Sprintf("-%d", i),
+			handler.uniqueName+fmt.Sprintf("-%d", idx),
 		)
 		if err != nil {
-			log.Printf("creating container failed with err: %v", err)
-			return nil, err
+			return err
 		}
-
-		log.Printf("created container: %s", c.ID)
-		dh.containers = append(dh.containers, c.ID)
+		handler.containers = append(handler.containers, c.ID)
 	}
 
-	err = os.RemoveAll(dh.filePath)
+	return nil
+}
+
+// Add allows that we can scale-out, this function adds a single new container.
+// So for adding several instances Add must be called the desired amount of times.
+func (handler dockerHandler) Add() (string, error) {
+
+	prev := handler.containers
+
+	err := createContainer(&handler, 1)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	log.Println("removed folder", dh.filePath)
+	curr := handler.containers
 
-	return dh, nil
+	slices.Sort(prev)
+	slices.Sort(curr)
 
+	var containerName string
+
+	for i := 0; i < len(prev); i++ {
+		if prev[i] != curr[i] {
+			containerName = curr[i]
+		}
+	}
+	containerName = curr[len(curr)-1]
+
+	return containerName, err
 }
 
-func (d *DockerBackend) Stop() error {
-	//TODO implement me
-	panic("implement me")
+func (handler dockerHandler) StartContainer(name string) error {
+	wg := sync.WaitGroup{}
+
+	wg.Add(1)
+
+	errChan := make(chan error, 1)
+	go func(name string) {
+		defer wg.Done()
+		err := handler.client.ContainerStart(context.Background(), name, client.ContainerStartOptions{})
+		if err != nil {
+			errChan <- err
+			log.Printf("Not able to start container")
+			return
+		}
+	}(name)
+	wg.Wait()
+
+	err := <-errChan
+	if err != nil {
+		return err
+	}
+
+	// get container IP
+	insp, err := handler.client.ContainerInspect(context.Background(), name)
+	if err != nil {
+		log.Printf("not able to inspect container %s with err: %v", name, err)
+		return err
+	}
+	ip := insp.NetworkSettings.Networks[handler.uniqueName].IPAddress.String()
+	handler.containerIPs = append(handler.containerIPs, ip)
+
+	// add health-check but no endpoint exists
+	return nil
 }
 
-func (d dockerHandler) IPs() []string {
-	//TODO implement me
-	panic("implement me")
+func (handler dockerHandler) Start() error {
+
+	wg := sync.WaitGroup{}
+
+	// Is this important?
+	// errChan := make(chan error)
+	for _, c := range handler.containers {
+		wg.Add(1)
+		go func(c string) {
+			defer wg.Done()
+			err := handler.client.ContainerStart(context.Background(), c, client.ContainerStartOptions{})
+			if err != nil {
+				log.Printf("Error starting container: %v", err)
+				return
+			}
+
+			log.Printf("successfully created container: %s", c)
+		}(c)
+	}
+
+	wg.Wait()
+
+	// get container IPs
+	for _, c := range handler.containers {
+		insp, err := handler.client.ContainerInspect(context.Background(), c)
+		if err != nil {
+			log.Printf("inspecting container failed with error")
+			return err
+		}
+		ip := insp.NetworkSettings.Networks[handler.uniqueName].IPAddress.String()
+		handler.containerIPs = append(handler.containerIPs, ip)
+	}
+
+	// add health-checks but entpoint does not exist
+
+	return nil
 }
 
-func (d dockerHandler) Start() error {
-	//TODO implement me
-	panic("implement me")
+func (handler dockerHandler) Delete(name string) error {
+	return fmt.Errorf("currently not implemented")
 }
 
-func (d dockerHandler) Destroy() error {
-	//TODO implement me
-	panic("implement me")
+func (d DockerBackend) Stop() error {
+	return fmt.Errorf("currently not implemented")
 }
 
-func (d dockerHandler) Logs() (io.Reader, error) {
-	//TODO implement me
-	panic("implement me")
+func (handler dockerHandler) IPs() []string {
+	return handler.containerIPs
+}
+
+func (handler dockerHandler) Destroy() error {
+	// TODO
+	return fmt.Errorf("currently not implemented")
+}
+
+func (handler dockerHandler) Logs() (io.Reader, error) {
+	return nil, fmt.Errorf("currently not implemented")
 }

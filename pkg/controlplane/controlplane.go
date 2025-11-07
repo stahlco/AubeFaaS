@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"sync"
 
 	uuid2 "github.com/google/uuid"
@@ -22,7 +23,8 @@ const (
 )
 
 type ControlPlane struct {
-	functionHandlers   map[string][]Handler
+	id                 string
+	FunctionHandlers   map[string]Handler
 	functionHandlerMtx sync.Mutex
 	rproxyListenAddr   string
 	rproxyConfigPort   int
@@ -32,16 +34,32 @@ type ControlPlane struct {
 // Backend has only the Docker implementation
 type Backend interface {
 	// Create creates a function in the Backend -> used by the upload script
-	Create(name string, filedir string) (Handler, error)
+	Create(name string, filedir string, initThreads int, maxThreads int) (Handler, error)
 	Stop() error
 }
 
 // Handler is a 'generic' interface for all different Backend (only have Docker for now)
 type Handler interface {
 	IPs() []string
+	// StartContainer will be triggered after Add was invoked successfully
+	StartContainer(name string) error
+	// Start will be triggered right after creation of the initial containers
 	Start() error
+	Add() (string, error)
+	Delete(name string) error
 	Destroy() error
 	Logs() (io.Reader, error)
+}
+
+func New(id string, rproxyListenAddr string, rproxyConfigPort int, backend Backend) *ControlPlane {
+	return &ControlPlane{
+		id:                 id,
+		FunctionHandlers:   make(map[string]Handler),
+		functionHandlerMtx: sync.Mutex{},
+		rproxyListenAddr:   rproxyListenAddr,
+		rproxyConfigPort:   rproxyConfigPort,
+		backend:            backend,
+	}
 }
 
 func (cp *ControlPlane) Stop() error {
@@ -50,6 +68,7 @@ func (cp *ControlPlane) Stop() error {
 }
 
 func (cp *ControlPlane) createFunction(name string, fnzip []byte, subfolderPath string) (string, error) {
+	log.Printf("createFunction received following args: %s, %d", name, len(fnzip))
 	uuid, err := uuid2.NewRandom()
 	if err != nil {
 		log.Printf("not able to create uuid with error: %v", err)
@@ -59,7 +78,7 @@ func (cp *ControlPlane) createFunction(name string, fnzip []byte, subfolderPath 
 	log.Printf("creating function %s, with uuid: %s", name, uuid.String())
 
 	p := path.Join(TmpDir, uuid.String())
-	err = os.Mkdir(p, 0777)
+	err = os.MkdirAll(p, 0777)
 	if err != nil {
 		log.Printf("not able to create directory: %s with err: %v", p, err)
 		return "", err
@@ -99,28 +118,27 @@ func (cp *ControlPlane) createFunction(name string, fnzip []byte, subfolderPath 
 
 	// What are we doing if the function already exists? -> Deploy a new one
 
+	var oldHandler Handler
+	if existingHandler, ok := cp.FunctionHandlers[name]; ok {
+		oldHandler = existingHandler
+	}
+
 	cp.functionHandlerMtx.Lock()
 	defer cp.functionHandlerMtx.Unlock()
 
-	fh, err := cp.backend.Create(name, p)
+	// Now just Mock stuff, need to switch the upload script!
+	// Hier kriegen wir einen Handler zurück!
+	// TODO
+	fh, err := cp.backend.Create(name, p, 1, 10)
 	if err != nil {
 		log.Printf("creating the function handler failed with err: %v", err)
 		return "", err
 	}
 
-	var handlers []Handler
-	if existingHandlers, ok := cp.functionHandlers[name]; ok {
-		handlers = append(existingHandlers, fh)
-	} else {
-		handlers = append(handlers, fh)
-	}
+	cp.FunctionHandlers[name] = fh
 
-	cp.functionHandlers[name] = handlers
-
-	// Starting only the new function
-	err = fh.Start()
+	err = cp.FunctionHandlers[name].Start()
 	if err != nil {
-		log.Printf("starting the function: %s failed with error: %v", name, err)
 		return "", err
 	}
 
@@ -153,15 +171,12 @@ func (cp *ControlPlane) createFunction(name string, fnzip []byte, subfolderPath 
 		return "", fmt.Errorf("rproxy returned status code %d", resp.StatusCode)
 	}
 
-	defer resp.Body.Close()
-
-	r, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("error occured reading from response body: %v", err)
-		return "", err
+	if oldHandler != nil {
+		err = oldHandler.Destroy()
+		if err != nil {
+			return "", err
+		}
 	}
-
-	log.Printf("rproxy response: %s", r)
 
 	return name, nil
 }
@@ -186,6 +201,50 @@ func (cp *ControlPlane) Upload(name string, zippedString string) (string, error)
 	return r, nil
 }
 
-func (cp *ControlPlane) Update(name string, amount int) ([]string, error) {
-	return nil, nil
+// Scale Wie kriegen wir die IPs wieder zum Proxy?
+// returns: a list of IPs which have been added
+func (cp *ControlPlane) Scale(name string, amount int) ([]string, error) {
+	var handler Handler
+	if existingHandler, ok := cp.FunctionHandlers[name]; ok {
+		handler = existingHandler
+	} else {
+		return nil, http.ErrMissingFile // Represents
+	}
+
+	// If we have the handler, what do we want to do!
+	// Create a new Container! -> Start the container -> and return IPs to the RProxy so it can add them!
+
+	// Before we are creating a new function -> get IPs than find differences
+
+	var ips []string
+
+	for i := 0; i < amount; i++ {
+		prev := handler.IPs()
+		containerName, err := handler.Add()
+
+		if err != nil {
+			return nil, err
+		}
+
+		err = handler.StartContainer(containerName)
+		if err != nil {
+			return nil, err
+		}
+
+		curr := handler.IPs()
+
+		slices.Sort(prev)
+		slices.Sort(curr)
+
+		for i := 0; i < len(prev); i++ {
+			if prev[i] != curr[i] {
+				containerName = curr[i]
+			}
+		}
+		ip := curr[len(curr)-1]
+
+		ips = append(ips, ip)
+	}
+
+	return ips, nil
 }

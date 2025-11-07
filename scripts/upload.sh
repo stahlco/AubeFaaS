@@ -2,7 +2,9 @@
 
 # upload.sh folder-name name
 
+
 set -e
+
 if ! command -v curl &> /dev/null
 then
   echo "curl could not be found but is a prerequisite for this script"

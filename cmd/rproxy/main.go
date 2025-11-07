@@ -2,9 +2,15 @@ package main
 
 import (
 	"aube/pkg/rproxy"
+	"bytes"
+	"encoding/json"
 	"log"
 	"net/http"
-	"os"
+)
+
+const (
+	UserAddr   = ":8093"
+	ConfigAddr = ":8091"
 )
 
 func main() {
@@ -13,14 +19,67 @@ func main() {
 
 	proxy := rproxy.New()
 
-	err := proxy.Add("reverse_echo", "ws://localhost:8001")
-	if err != nil {
-		log.Printf("adding test function to proxy faile with error: %v", err)
-		os.Exit(1)
-	}
+	// Need a Config-Endpoint Server on Port :8091
 
+	configServer := http.NewServeMux()
+
+	configServer.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		b := new(bytes.Buffer)
+		_, err := b.ReadFrom(req.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		str := b.String()
+
+		d := struct {
+			FunctionName string   `json:"name"`
+			FunctionIPs  []string `json:"ips"`
+		}{}
+
+		err = json.Unmarshal([]byte(str), &d)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+
+		if d.FunctionName[0] == '/' {
+			d.FunctionName = d.FunctionName[1:]
+		}
+
+		if len(d.FunctionIPs) > 0 {
+			err = proxy.Add(d.FunctionName, d.FunctionIPs)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		} else {
+			err = proxy.Del(d.FunctionName)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+	})
+
+	go func() {
+		err := http.ListenAndServe(ConfigAddr, configServer)
+		if err != nil {
+			log.Fatalf("error listening to config")
+		}
+	}()
+
+	// User Endpoint
 	server := &http.Server{
-		Addr:    ":8093",
+		Addr:    UserAddr,
 		Handler: proxy,
 	}
 

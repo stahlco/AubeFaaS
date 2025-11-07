@@ -11,14 +11,14 @@ import (
 )
 
 type RProxy struct {
-	hosts    map[string]string
+	hosts    map[string]*Function
 	hl       sync.RWMutex
 	upgrader websocket.Upgrader
 }
 
 func New() *RProxy {
 	return &RProxy{
-		hosts: make(map[string]string),
+		hosts: make(map[string]*Function),
 		upgrader: websocket.Upgrader{
 			// Allows all origins to upgrade to a stream
 			CheckOrigin: func(r *http.Request) bool { return true },
@@ -27,7 +27,9 @@ func New() *RProxy {
 }
 
 // Add takes a container name and an ip-addr of a specific function
-func (r *RProxy) Add(name string, ip string) error {
+func (r *RProxy) Add(name string, ips []string) error {
+
+	f := NewFunction(name, ips)
 
 	r.hl.Lock()
 	defer r.hl.Unlock()
@@ -37,7 +39,7 @@ func (r *RProxy) Add(name string, ip string) error {
 	// 	return fmt.Errorf("function already exists")
 	// }
 
-	r.hosts[name] = ip
+	r.hosts[name] = f
 	return nil
 }
 
@@ -68,14 +70,14 @@ func (r *RProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Get the function backend -> Could also be a map (but it's just a single addr -> no handler just a single IP)
-	functionUrl, ok := r.hosts[functionName]
+	function, ok := r.hosts[functionName]
 	if !ok {
 		http.Error(w, "function not found", http.StatusNotFound)
 		log.Printf("function not found: %s", functionName)
 		return
 	}
 
-	log.Printf("chose functionUrl: %s", functionUrl)
+	log.Printf("chose functionUrl: %s", function)
 
 	// Upgrade the HTTP-Request
 	clientConn, err := r.upgrader.Upgrade(w, req, nil)
@@ -88,7 +90,15 @@ func (r *RProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	log.Printf("client successfully connected")
 
-	functionConn, _, err := websocket.DefaultDialer.Dial(functionUrl, nil)
+	// This call simultaneously "blocks" the container
+	containerIP, err := function.getContainer()
+	if err != nil {
+		log.Printf("Not able to get a Container for the function")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	functionConn, _, err := websocket.DefaultDialer.Dial(containerIP, nil)
 	if err != nil {
 		log.Printf("failed to connect to the function: %v", err)
 		clientConn.WriteMessage(
@@ -97,6 +107,8 @@ func (r *RProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		)
 		return
 	}
+	// Free the container
+	defer function.freeContainer(containerIP)
 	defer functionConn.Close()
 
 	log.Printf("connected to function-backend successfully")
@@ -128,6 +140,7 @@ func (r *RProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		log.Printf("connection closed with error: %v", err)
 	} else {
+		// Connection closed, need to move the container to freeContainer
 		log.Printf("connection closed without an error")
 	}
 }

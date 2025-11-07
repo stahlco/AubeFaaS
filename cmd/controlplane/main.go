@@ -2,8 +2,10 @@ package main
 
 import (
 	"aube/pkg/controlplane"
+	"aube/pkg/docker"
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -45,11 +47,17 @@ func main() {
 	id := uuid.New().String()
 
 	// Creating Docker backend for the functions
+	// Only allow docker for now -> Many use more lightweight containerization in the future
+	backend, err := docker.New(id)
+	if err != nil {
+		log.Printf("Not able to create Backend err: %v", err)
+		os.Exit(1)
+	}
 
 	// Creating reverse proxy
 	rProxyDir := path.Join(os.TempDir(), id)
 
-	err := os.MkdirAll(rProxyDir, 0755)
+	err = os.MkdirAll(rProxyDir, 0755)
 	if err != nil {
 		log.Printf("creating rproxyDir failed with error: %v", err)
 		os.Exit(1)
@@ -105,7 +113,8 @@ func main() {
 
 	// Creating a ControlPlane instance
 
-	cp := &controlplane.ControlPlane{}
+	// TODO
+	cp := controlplane.New(uuid.New().String(), RProxyListenAddress, RProxyConfigPort, backend)
 
 	s := &server{
 		cp: cp,
@@ -115,7 +124,7 @@ func main() {
 	r := http.NewServeMux()
 	r.HandleFunc("/upload", s.uploadHandler)
 	r.HandleFunc("/delete", s.deleteHandler)
-	r.HandleFunc("/update", s.updateHandler)
+	r.HandleFunc("/scale", s.scaleHandler)
 
 	// Shutdown-Hook
 	sig := make(chan os.Signal, 1)
@@ -146,7 +155,7 @@ func main() {
 }
 
 func (s *server) uploadHandler(w http.ResponseWriter, req *http.Request) {
-
+	log.Printf("received upload request")
 	if req.Method != http.MethodPost {
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -182,12 +191,10 @@ func (s *server) deleteHandler(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// updateHandler allows the RProxy to inform Backend to scale out/in a specific function.
-// A function has n Containers, each for a single tenant. If there are 1 > free functions, the RProxy will spawn new container
-func (s *server) updateHandler(w http.ResponseWriter, req *http.Request) {
+func (s *server) scaleHandler(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
-		log.Printf("received bad request from rproxy to update already function")
 		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
 
 	d := struct {
@@ -197,18 +204,30 @@ func (s *server) updateHandler(w http.ResponseWriter, req *http.Request) {
 
 	err := json.NewDecoder(req.Body).Decode(&d)
 	if err != nil {
-		log.Printf("not able to decode request body: %v", err)
+		log.Printf("not able to correctly decode the body of the message")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	res, err := s.cp.Update(d.FunctionName, d.Amount)
-	if err != nil {
-		log.Printf("not able to update function: %s with error: %v", d.FunctionName, err)
+	ips, err := s.cp.Scale(d.FunctionName, d.Amount)
+	if err != nil && errors.Is(err, http.ErrMissingFile) {
+		log.Printf("handler with name: %s not found", d.FunctionName)
+		w.WriteHeader(http.StatusNotFound)
+	} else if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, res)
+
+	r := struct {
+		Ips []string `json:"ips"`
+	}{
+		Ips: ips,
+	}
+
+	if err := json.NewEncoder(w).Encode(r); err != nil {
+		log.Printf("failed to encode response: %v", err)
+	}
+
 }
