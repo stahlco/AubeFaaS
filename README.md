@@ -45,7 +45,7 @@ The **Control Plane** is the core of our platform. It fully manages the upload, 
 
 #### Reverse Proxy
 
-The **Reverse Proxy** is a lightweight, WebSocket-based reverse proxy designed to route client requests to dynamically managed funtion-threads (docker-containers). It acts as a central gateway that connects clients to function-specific backend instances and forwards WebSocket-Streams using Go's `io.Copy`-Function. At its core, it maintains a registry of functions and it's available and already in use threads (containers). Client can send a request to `ws://<rproxy-addr>:8093/<function-name>`, and it will be fowarded to a specific function container. The Reverse Proxy also manages the lifecycle of the containers, by scaling a function if teh amount of available containers drop below a specific value (e.g. 1) or shutting down unused containers (e.g. 15 min unused). The Prototype doesn't is not optimized in that manner.
+The **Reverse Proxy** is a lightweight, WebSocket-based reverse proxy designed to route client requests to dynamically managed funtion-threads (docker-containers). It acts as a central gateway that connects clients to function-specific backend instances and forwards WebSocket-Streams using Go's `io.Copy`-Function. At its core, it maintains a registry of functions and it's, available and already in use, threads (containers). Clients can send a request to `ws://<rproxy-addr>:8093/<function-name>`, and it will be fowarded to a available function container. The Reverse Proxy also manages the lifecycle of the containers, by scaling a function if the amount of available containers drop below a specific value (e.g. 1) or shutting down unused containers (e.g. 15 min unused). The Prototype isn't optimized in that manner.
 
 #### Functions
 
