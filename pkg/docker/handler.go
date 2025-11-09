@@ -91,39 +91,10 @@ func (d DockerBackend) Create(name string, filedir string, initThreads int, maxT
 		return nil, err
 	}
 
-	err = PrintFolderEntries(handler.filePath)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	//srcPath := path.Join(runtimesDir, "python")
-
-	err = PrintFolderEntries("./")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	pwd, err := os.Getwd()
-	if err != nil {
-		log.Println(err)
-	}
-	log.Printf("DEBUG: Current Directory %s", pwd)
-
-	log.Printf("Executing: cp %s %s", path.Join(runtimesDir, "python/"), handler.filePath)
 	err = util.CopyDirFromEmbed(runtimes, path.Join(runtimesDir, "python"), handler.filePath)
 	if err != nil {
 		log.Printf("copying embed filesystem (python-runtime) into function failed with err: %v", err)
 		return nil, err
-	}
-
-	err = PrintFolderEntries(handler.filePath)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = PrintFolderEntries(handler.filePath)
-	if err != nil {
-		log.Fatal(err)
 	}
 
 	// Copy function-code into the runtime
@@ -142,11 +113,6 @@ func (d DockerBackend) Create(name string, filedir string, initThreads int, maxT
 	if err != nil {
 		log.Printf("copying function code into fn-folder failed with err: %v", err)
 		return nil, err
-	}
-
-	err = PrintFolderEntries(handler.filePath)
-	if err != nil {
-		log.Fatal(err)
 	}
 
 	tar, err := archive.TarWithOptions(handler.filePath, &archive.TarOptions{})
@@ -240,20 +206,6 @@ func createContainer(handler *dockerHandler, amount int) error {
 		handler.containers = append(handler.containers, c.ID)
 	}
 
-	// Where do we add the IP?
-
-	return nil
-}
-
-func PrintFolderEntries(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-
-	for _, entry := range entries {
-		log.Printf("DEBUG: %s contains: %s", dir, entry.Name())
-	}
 	return nil
 }
 
@@ -365,8 +317,64 @@ func (handler *dockerHandler) Start() error {
 	return nil
 }
 
-func (handler *dockerHandler) Delete(name string) error {
-	return fmt.Errorf("currently not implemented")
+// Delete deletes a specific Container based on the given
+func (handler *dockerHandler) Delete(containerIP string) error {
+	if !slices.Contains(handler.containerIPs, containerIP) {
+		return fmt.Errorf("containerIP: %s does not exist in List of containerIPs", containerIP)
+	}
+
+	containerID := ""
+	// Now we need to find the container which is represented by the containerIP
+	for _, c := range handler.containers {
+		inspect, err := handler.client.ContainerInspect(context.Background(), c)
+		if err != nil {
+			log.Printf("Failed to inspect container with id: %s ", c)
+			return err
+		}
+
+		for _, net := range inspect.NetworkSettings.Networks {
+			if net.IPAddress.String() == containerIP {
+				containerID = c
+				break
+			}
+		}
+
+		if containerID != "" {
+			break
+		}
+	}
+
+	containerRemoveOps := client.ContainerRemoveOptions{
+		RemoveVolumes: true,
+		RemoveLinks:   true,
+		Force:         true,
+	}
+
+	err := handler.client.ContainerRemove(context.Background(), containerID, containerRemoveOps)
+	if err != nil {
+		log.Printf("Removing Container failed with error: %v", err)
+		return err
+	}
+
+	// remove Container from Containers
+
+	for i := 0; i < len(handler.containers); i++ {
+		if handler.containers[i] == containerID {
+			handler.containers = append(handler.containers[:i], handler.containers[(i+1):]...)
+			break
+		}
+	}
+
+	// remove ContainerIP from ContainerIPs
+
+	for i := 0; i < len(handler.containerIPs); i++ {
+		if handler.containerIPs[i] == containerIP {
+			handler.containerIPs = append(handler.containerIPs[:i], handler.containerIPs[(i+1):]...)
+			break
+		}
+	}
+
+	return nil
 }
 
 func (d DockerBackend) Stop() error {
@@ -374,12 +382,10 @@ func (d DockerBackend) Stop() error {
 }
 
 func (handler *dockerHandler) IPs() []string {
-	log.Printf("DEBUG: Received request to give the List of IPs of FH: %v which is: %v", handler, handler.containerIPs)
 	return handler.containerIPs
 }
 
 func (handler *dockerHandler) Destroy() error {
-	// TODO
 	return fmt.Errorf("currently not implemented")
 }
 
