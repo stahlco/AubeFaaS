@@ -123,7 +123,7 @@ func (d DockerBackend) Create(name string, filedir string, initThreads int, maxT
 	log.Printf("Created tar: %+v", tar)
 
 	imageBuildOpts := client.ImageBuildOptions{
-		Tags:       []string{handler.uniqueName},
+		Tags:       []string{handler.uniqueName}, // needed for identifying the image
 		Dockerfile: "Dockerfile",
 		Remove:     true,
 		Labels: map[string]string{
@@ -344,15 +344,15 @@ func (handler *dockerHandler) Delete(containerIP string) error {
 		}
 	}
 
-	containerRemoveOps := client.ContainerRemoveOptions{
-		RemoveVolumes: true,
-		RemoveLinks:   true,
-		Force:         true,
+	err := handler.client.ContainerStop(context.Background(), containerID, client.ContainerStopOptions{})
+	if err != nil {
+		log.Printf("stopping container %s failed with err: %s, please remove manually", containerID, err)
+		return err
 	}
 
-	err := handler.client.ContainerRemove(context.Background(), containerID, containerRemoveOps)
+	err = handler.client.ContainerRemove(context.Background(), containerID, client.ContainerRemoveOptions{})
 	if err != nil {
-		log.Printf("Removing Container failed with error: %v", err)
+		log.Printf("removing container %s failed with error: %v, please remove manually", containerID, err)
 		return err
 	}
 
@@ -385,8 +385,43 @@ func (handler *dockerHandler) IPs() []string {
 	return handler.containerIPs
 }
 
+// Destroy cleans up the complete function, so every container gets shut down
 func (handler *dockerHandler) Destroy() error {
-	return fmt.Errorf("currently not implemented")
+
+	wg := sync.WaitGroup{}
+	for _, c := range handler.containers {
+
+		wg.Add(1)
+		go func(c string) {
+			defer wg.Done()
+			err := handler.client.ContainerStop(context.Background(), c, client.ContainerStopOptions{})
+			if err != nil {
+				log.Printf("not able to stop container %s with err: %v, please remove manually", c, err)
+				return
+			}
+
+			err = handler.client.ContainerRemove(context.Background(), c, client.ContainerRemoveOptions{})
+			if err != nil {
+				log.Printf("not able to remove container %s with err: %v, please remove manually", c, err)
+				return
+			}
+		}(c)
+	}
+	wg.Wait()
+
+	err := handler.client.NetworkRemove(context.Background(), handler.network)
+	if err != nil {
+		log.Printf("not able to remove network: %s with err: %v, please remove manually", handler.network, err)
+	}
+
+	// We need to remove the image
+	_, err = handler.client.ImageRemove(context.Background(), handler.uniqueName, client.ImageRemoveOptions{})
+	if err != nil {
+		log.Printf("not able to remove the image")
+		return err
+	}
+
+	return nil
 }
 
 func (handler *dockerHandler) Logs() (io.Reader, error) {
