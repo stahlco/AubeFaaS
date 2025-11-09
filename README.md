@@ -47,7 +47,8 @@ The **Control Plane** is the core of our platform. It fully manages the upload, 
 
 The **Reverse Proxy** is a lightweight, WebSocket-based reverse proxy designed to route client requests to dynamically managed funtion-threads (docker-containers). It acts as a central gateway that connects clients to function-specific backend instances and forwards WebSocket-Streams using Go's `io.Copy`-Function. At its core, it maintains a registry of functions and it's, available and already in use, threads (containers). Clients can send a request to `ws://<rproxy-addr>:8093/<function-name>`, and it will be fowarded to a available function container. The Reverse Proxy also manages the lifecycle of the containers, by scaling a function if the amount of available containers drop below a specific value (e.g. 1) or shutting down unused containers (e.g. 15 min unused). The Prototype isn't optimized in that manner.
 
-#### Functions
+#### Backend (Docker)
+The **Docker Backend** provides the runtime environment for executing functions inside isolated Docker containers. It is responsible for building, deploying and managing containerized function instances. Each function into its own Docker image, connected to a dedicated Docker network, and scaled dynamically by just creating new containers with the function-image. For this prototype we just implemented a `python3` function runtime. Within the **Docker Backend** each function is represented by a `dockerHandler` struct, which manages its containers, IP addresses, configuration, and scaling behavoir (`initThreads` = initial containers, `maxThreads` = maximum amount a containers). Our implementation allows for batched or indivual start of containers, depending on needs (initialization or scaling of the function). 
 
 ---
 
