@@ -19,12 +19,13 @@ if __name__ == "__main__":
     # Import the function
     sleep(10)
     try:
-        from fn.fn import fn
+        from fn import fn
     except ImportError:
         raise ImportError("Failed to import fn.py")
 
 
     def function_handler(websocket) -> None:
+        print("Received request")
         try:
             fn(websocket)
         except Exception as e:
@@ -32,6 +33,6 @@ if __name__ == "__main__":
 
     # You could another HandlerClass with manages health-checks (but I don´t care rn)
 
-    with serve(function_handler, "", 8000) as server:
+    with serve(function_handler, "0.0.0.0", 8000) as server:
         print("Server running")
         server.serve_forever()

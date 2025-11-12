@@ -61,7 +61,7 @@ func (r *RProxy) Del(name string) error {
 }
 
 func (r *RProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	log.Printf("received req: %v from %v")
+	log.Printf("received req: %v", req.URL)
 	functionName := req.URL.Path
 
 	if functionName == "" || functionName == "/" {
