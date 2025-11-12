@@ -24,6 +24,7 @@ func main() {
 	configServer := http.NewServeMux()
 
 	configServer.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		log.Printf("reiceved req: %v", req)
 		if req.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
@@ -52,11 +53,13 @@ func main() {
 		}
 
 		if len(d.FunctionIPs) > 0 {
+			log.Printf("received req, now adding function")
 			err = proxy.Add(d.FunctionName, d.FunctionIPs)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
+			log.Printf("current registry of the proxy: %v", proxy.GetHosts())
 			w.WriteHeader(http.StatusOK)
 			return
 		} else {
@@ -68,6 +71,7 @@ func main() {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+
 	})
 
 	go func() {

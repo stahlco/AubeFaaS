@@ -1,10 +1,25 @@
+from time import sleep
+
 from websockets.sync.server import serve
+import os
+
+def print_tree(startpath, prefix=""):
+    entries = sorted(os.listdir(startpath))
+    for i, entry in enumerate(entries):
+        path = os.path.join(startpath, entry)
+        connector = "└── " if i == len(entries) - 1 else "├── "
+        print(prefix + connector + entry)
+        if os.path.isdir(path):
+            extension = "    " if i == len(entries) - 1 else "│   "
+            print_tree(path, prefix + extension)
 
 
 if __name__ == "__main__":
+    print_tree(".")
     # Import the function
+    sleep(10)
     try:
-        from test.fn.fn import fn
+        from fn.fn import fn
     except ImportError:
         raise ImportError("Failed to import fn.py")
 
@@ -17,6 +32,6 @@ if __name__ == "__main__":
 
     # You could another HandlerClass with manages health-checks (but I don´t care rn)
 
-    with serve(function_handler, "", 8001) as server:
+    with serve(function_handler, "", 8000) as server:
         print("Server running")
         server.serve_forever()

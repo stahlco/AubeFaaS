@@ -1,6 +1,5 @@
 #!/bin/sh
-
-AF_TAG="AubeFaaS"
+AF_TAG="AubeFaaS-ID"
 TMP_DIR="tmp"
 
 # remove old containers, networks and images

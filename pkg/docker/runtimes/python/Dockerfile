@@ -8,7 +8,7 @@ EXPOSE 8000
 WORKDIR /usr/src/app
 
 COPY fn/* ./
-RUN uv pip install -r requirements.txt --user
+RUN python -m pip install -r requirements.txt --user
 
 ENV PYTHONUNBUFFERED=1
 CMD [ "python3", "functionhandler.py" ]

@@ -16,6 +16,10 @@ type RProxy struct {
 	upgrader websocket.Upgrader
 }
 
+func (p *RProxy) GetHosts() map[string]*Function {
+	return p.hosts
+}
+
 func New() *RProxy {
 	return &RProxy{
 		hosts: make(map[string]*Function),
@@ -28,6 +32,7 @@ func New() *RProxy {
 
 // Add takes a container name and an ip-addr of a specific function
 func (r *RProxy) Add(name string, ips []string) error {
+	log.Printf("received function %s now adding it with IPs : [%v]", name, ips)
 
 	f := NewFunction(name, ips)
 
@@ -56,7 +61,7 @@ func (r *RProxy) Del(name string) error {
 }
 
 func (r *RProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-
+	log.Printf("received req: %v from %v")
 	functionName := req.URL.Path
 
 	if functionName == "" || functionName == "/" {
@@ -98,6 +103,7 @@ func (r *RProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	log.Printf("containerIP: %s", containerIP)
 	functionConn, _, err := websocket.DefaultDialer.Dial(containerIP, nil)
 	if err != nil {
 		log.Printf("failed to connect to the function: %v", err)

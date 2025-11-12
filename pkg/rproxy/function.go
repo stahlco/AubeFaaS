@@ -10,10 +10,16 @@ import (
 	"sync"
 )
 
+const (
+	UrlPrefix    = "ws"
+	FunctionPort = 8000
+)
+
 // Function will be added soon -> Multi-Tenancy
 type Function struct {
 	name string
 	// uniqueContainerName -> IP
+	//maybe add a Timestamp in the Future and an async clean-up
 	freeIPs []string
 	usedIPs []string
 	hl      sync.RWMutex
@@ -85,7 +91,10 @@ func (f *Function) getContainer() (string, error) {
 		return "", err
 	}
 
-	return containerIP, nil
+	// Build the proper function URL
+	url := fmt.Sprintf("%s://%s:%d", UrlPrefix, containerIP, FunctionPort)
+
+	return url, nil
 }
 
 func (f *Function) scaleFunction() error {

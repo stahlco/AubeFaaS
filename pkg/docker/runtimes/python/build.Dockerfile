@@ -1,7 +1,7 @@
 ARG PYTHON_VERSION=3.11
 ARG ALPINE_VERSION=3.19
 
-FROM ghcr.io/astral-sh/uv:python3.11-alpine
+FROM python:${PYTHON_VERSION}-alpine${ALPINE_VERSION}
 
 # Create app directory
 WORKDIR /usr/src/app
