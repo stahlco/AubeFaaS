@@ -275,6 +275,8 @@ func (handler *dockerHandler) StartContainer(name string) error {
 		log.Printf("not able to inspect container %s with err: %v", name, err)
 		return err
 	}
+
+	log.Printf("networks of inspection of %s: %+v", name, insp.NetworkSettings.Networks)
 	ip := insp.NetworkSettings.Networks[handler.uniqueName].IPAddress.String()
 	log.Printf("inspected following ip: %s to containerIPs: %v", ip, handler.containerIPs)
 	handler.containerIPs = append(handler.containerIPs, ip)
@@ -293,12 +295,14 @@ func (handler *dockerHandler) StartContainer(name string) error {
 			log.Print(logs)
 		}
 
+		time.Sleep(1)
+
 		// timeout of 3 seconds
 		client := http.Client{
 			Timeout: 3 * time.Second,
 		}
 
-		resp, err := client.Get("http://" + ip + ":8000/health")
+		resp, err := client.Get("http://" + ip + ":8080/health")
 		if err != nil {
 			log.Println(err)
 			log.Println("retrying in 1 second")
