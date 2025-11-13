@@ -82,24 +82,22 @@ func (r *RProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	log.Printf("chose functionUrl: %s", function)
-
 	// Upgrade the HTTP-Request
 	clientConn, err := r.upgrader.Upgrade(w, req, nil)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("not able to upgrade request to websocket-stream with error: %v", err), http.StatusInternalServerError)
+		//http.Error(w, fmt.Sprintf("not able to upgrade request to websocket-stream with error: %v", err), http.StatusInternalServerError)
 		log.Printf("not able to upgrade to ws-conn with err: %v", err)
 		return
 	}
 	defer clientConn.Close()
 
-	log.Printf("client successfully connected")
+	log.Printf("client successfully connected to proxy")
 
 	// This call simultaneously "blocks" the container
 	containerIP, err := function.getContainer()
 	if err != nil {
-		log.Printf("Not able to get a Container for the function")
-		w.WriteHeader(http.StatusInternalServerError)
+		log.Printf("Not able to get a Container for the function: %v", err)
+		//w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 

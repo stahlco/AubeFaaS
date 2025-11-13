@@ -3,6 +3,7 @@ FROM scratch
 ADD blob.tar.gz /
 
 EXPOSE 8000
+EXPOSE 8080
 
 # Create app directory
 WORKDIR /usr/src/app

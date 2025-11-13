@@ -4,15 +4,19 @@ import (
 	"aube/pkg/controlplane"
 	"aube/pkg/util"
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"path"
 	"slices"
 	"sync"
+	"time"
 
+	"github.com/docker/docker/pkg/stdcopy"
 	uuid2 "github.com/google/uuid"
 	"github.com/moby/go-archive"
 	"github.com/moby/moby/api/types/container"
@@ -238,6 +242,7 @@ func (handler *dockerHandler) Add() (string, error) {
 }
 
 func (handler *dockerHandler) StartContainer(name string) error {
+	log.Printf("starting container with name: %s", name)
 	wg := sync.WaitGroup{}
 
 	wg.Add(1)
@@ -251,7 +256,11 @@ func (handler *dockerHandler) StartContainer(name string) error {
 			log.Printf("Not able to start container")
 			return
 		}
+		// this prevents blocking
+		errChan <- nil
+		log.Printf("started container with name: %s", name)
 	}(name)
+
 	wg.Wait()
 
 	err := <-errChan
@@ -259,6 +268,7 @@ func (handler *dockerHandler) StartContainer(name string) error {
 		return err
 	}
 
+	log.Printf("inspecting container: %s", name)
 	// get container IP
 	insp, err := handler.client.ContainerInspect(context.Background(), name)
 	if err != nil {
@@ -266,15 +276,48 @@ func (handler *dockerHandler) StartContainer(name string) error {
 		return err
 	}
 	ip := insp.NetworkSettings.Networks[handler.uniqueName].IPAddress.String()
+	log.Printf("inspected following ip: %s to containerIPs: %v", ip, handler.containerIPs)
 	handler.containerIPs = append(handler.containerIPs, ip)
+	log.Printf("added ip to ips now: %v", handler.containerIPs)
 
-	// add health-check but no endpoint exists
+	retries := 3
+
+	for i := 0; i < retries; i++ {
+		if i == retries-1 {
+			log.Printf("Container not able to start with 3 retries, logs:")
+			logs, err := handler.getContainerLogs(name)
+			if err != nil {
+				log.Printf("error occured printing logs, aborting: %v", err)
+				return err
+			}
+			log.Print(logs)
+		}
+
+		// timeout of 3 seconds
+		client := http.Client{
+			Timeout: 3 * time.Second,
+		}
+
+		resp, err := client.Get("http://" + ip + ":8000/health")
+		if err != nil {
+			log.Println(err)
+			log.Println("retrying in 1 second")
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			log.Println("container", ip, "is ready")
+			break
+		}
+		log.Println("container", ip, "is not ready yet, retrying in 1 second")
+		time.Sleep(1 * time.Second)
+	}
+
 	return nil
 }
 
 func (handler *dockerHandler) Start() error {
-
-	log.Printf("DEBUG: Starting Containers of hanler %+v", handler)
 	wg := sync.WaitGroup{}
 
 	// Is this important?
@@ -311,9 +354,6 @@ func (handler *dockerHandler) Start() error {
 	}
 
 	log.Printf("FH: %v, This the list of ips fetched: %v", handler, handler.containerIPs)
-
-	// add health-checks but entpoint does not exist
-
 	return nil
 }
 
@@ -426,4 +466,51 @@ func (handler *dockerHandler) Destroy() error {
 
 func (handler *dockerHandler) Logs() (io.Reader, error) {
 	return nil, fmt.Errorf("currently not implemented")
+}
+
+func (handler *dockerHandler) getContainerLogs(name string) (string, error) {
+	logs := ""
+
+	l, err := handler.client.ContainerLogs(
+		context.Background(),
+		name,
+		client.ContainerLogsOptions{
+			ShowStdout: true,
+			ShowStderr: true,
+			Timestamps: true,
+		})
+	if err != nil {
+		log.Printf("not able to fetch the container logs")
+		return "", err
+	}
+
+	var lstdout bytes.Buffer
+	var lstderr bytes.Buffer
+
+	_, err = stdcopy.StdCopy(&lstdout, &lstderr, l)
+	l.Close()
+	if err != nil {
+		return "", err
+	}
+
+	scanner := bufio.NewScanner(&lstdout)
+	for scanner.Scan() {
+		logs += fmt.Sprintf("function=%s handler=%s %s\n", handler.name, name, scanner.Text())
+	}
+
+	if err := scanner.Err(); err != nil {
+		return logs, err
+	}
+
+	scanner = bufio.NewScanner(&lstderr)
+
+	for scanner.Scan() {
+		logs += fmt.Sprintf("function=%s handler=%s %s\n", handler.name, name, scanner.Text())
+	}
+
+	if err := scanner.Err(); err != nil {
+		return logs, err
+	}
+
+	return logs, nil
 }

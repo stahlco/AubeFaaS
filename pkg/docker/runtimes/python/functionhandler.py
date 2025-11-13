@@ -1,23 +1,25 @@
-from time import sleep
+import http.server
+import threading
 
 from websockets.sync.server import serve
-import os
 
-def print_tree(startpath, prefix=""):
-    entries = sorted(os.listdir(startpath))
-    for i, entry in enumerate(entries):
-        path = os.path.join(startpath, entry)
-        connector = "└── " if i == len(entries) - 1 else "├── "
-        print(prefix + connector + entry)
-        if os.path.isdir(path):
-            extension = "    " if i == len(entries) - 1 else "│   "
-            print_tree(path, prefix + extension)
+class HealthHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        print(f"GET {self.path}")
+        if self.path == "/health":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write("OK".encode("utf-8"))
+            print("reporting health: OK")
+        else:
+            self.send_response(404)
+            self.end_headers()
 
+def start_health_server(host: str = "0.0.0.0", port: int = 8080):
+    s = http.server.ThreadingHTTPServer((host, port), HealthHandler)
+    s.serve_forever()
 
 if __name__ == "__main__":
-    print_tree(".")
-    # Import the function
-    sleep(10)
     try:
         from fn import fn
     except ImportError:
@@ -31,7 +33,9 @@ if __name__ == "__main__":
         except Exception as e:
             websocket.send(f"Failed to call function: {str(e)}")
 
-    # You could another HandlerClass with manages health-checks (but I don´t care rn)
+    # You could another HandlerClass with manages health-checks (but I don´t care rn) (listens to HTTP "0.0.0.0:8000/health")
+
+    threading.Thread(target=start_health_server, daemon=True).start()
 
     with serve(function_handler, "0.0.0.0", 8000) as server:
         print("Server running")

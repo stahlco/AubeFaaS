@@ -206,6 +206,7 @@ func (cp *ControlPlane) Upload(name string, zippedString string) (string, error)
 // Scale Wie kriegen wir die IPs wieder zum Proxy?
 // returns: a list of IPs which have been added
 func (cp *ControlPlane) Scale(name string, amount int) ([]string, error) {
+	log.Printf("now scaling function with name: %s and amount: %d", name, amount)
 	var handler Handler
 	if existingHandler, ok := cp.FunctionHandlers[name]; ok {
 		handler = existingHandler
@@ -222,7 +223,10 @@ func (cp *ControlPlane) Scale(name string, amount int) ([]string, error) {
 
 	for i := 0; i < amount; i++ {
 		prev := handler.IPs()
+		log.Printf("ips of function handler before scaling: %v", prev)
 		containerName, err := handler.Add()
+
+		log.Printf("added new container with name: %s", containerName)
 
 		if err != nil {
 			return nil, err
@@ -233,19 +237,26 @@ func (cp *ControlPlane) Scale(name string, amount int) ([]string, error) {
 			return nil, err
 		}
 
+		log.Printf("started container successfully")
+
 		curr := handler.IPs()
 
+		log.Printf("ips of function handler after scaling: %v", curr)
 		slices.Sort(prev)
 		slices.Sort(curr)
 
 		for i := 0; i < len(prev); i++ {
 			if prev[i] != curr[i] {
 				containerName = curr[i]
+				log.Printf("extracting containerName? is: %s", curr[i])
 			}
 		}
-		ip := curr[len(curr)-1]
 
+		ip := curr[len(curr)-1]
+		log.Printf("determined ip: %s and add this to ips: %v", ip, ips)
 		ips = append(ips, ip)
+		log.Printf("added ip to ips: %v", ips)
+
 	}
 
 	return ips, nil

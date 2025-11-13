@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"net/http"
 	"slices"
@@ -35,7 +36,6 @@ func NewFunction(name string, ips []string) *Function {
 }
 
 func (f *Function) useContainer(containerIP string) error {
-
 	if !slices.Contains(f.freeIPs, containerIP) {
 		return fmt.Errorf("%s not found in free container list", containerIP)
 	}
@@ -44,10 +44,15 @@ func (f *Function) useContainer(containerIP string) error {
 		return fmt.Errorf("%s is not in free containers but used containers", containerIP)
 	}
 
+	log.Printf("successfully passed checks")
 	f.hl.Lock()
 
-	remove(f.freeIPs, containerIP)
+	log.Printf("BEFORE: container lists of function: FREE: %v, USED: %v", f.freeIPs, f.usedIPs)
+
+	f.freeIPs = remove(f.freeIPs, containerIP)
 	f.usedIPs = append(f.usedIPs, containerIP)
+
+	log.Printf("AFTER: container lists of function: FREE: %v, USED: %v", f.freeIPs, f.usedIPs)
 
 	f.hl.Unlock()
 
@@ -66,7 +71,7 @@ func (f *Function) freeContainer(containerIP string) error {
 
 	f.hl.Lock()
 
-	remove(f.usedIPs, containerIP)
+	f.usedIPs = remove(f.usedIPs, containerIP)
 	f.freeIPs = append(f.freeIPs, containerIP)
 
 	f.hl.Unlock()
@@ -75,10 +80,13 @@ func (f *Function) freeContainer(containerIP string) error {
 }
 
 func (f *Function) getContainer() (string, error) {
+	log.Printf("trying to get a free container: %v", f.freeIPs)
 
 	if len(f.freeIPs) == 0 {
+		log.Printf("now trying to scale the function")
 		err := f.scaleFunction()
 		if err != nil {
+			log.Printf("error scaling the function")
 			return "", err
 		}
 	}
@@ -113,10 +121,15 @@ func (f *Function) scaleFunction() error {
 		return err
 	}
 
-	resp, err := http.Post("http://localhost:8090", "application/json", b)
+	log.Printf("now sending a http.Post to \"http://localhost:8090/scale\"")
+
+	resp, err := http.Post("http://localhost:8090/scale", "application/json", b)
 	if err != nil || resp == nil {
+		log.Printf("error in response")
 		return fmt.Errorf("resp nil or err: %v", err)
 	}
+
+	log.Printf("received this response from cp: %v", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("not able to scale the function received http status code: %v", resp.StatusCode)
@@ -131,17 +144,25 @@ func (f *Function) scaleFunction() error {
 		return err
 	}
 
+	log.Printf("decoded response into r: %v", r)
+
+	log.Printf("free_ips before update should be: [], is: %v", f.freeIPs)
 	// Add the new IPs to the freeIPs
 	f.freeIPs = append(f.freeIPs, r.NewIPs...)
+
+	log.Printf("free_ips before update should be not: [], is: %v", f.freeIPs)
 
 	return nil
 }
 
-func remove[T comparable](l []T, item T) []T {
-	for i, other := range l {
-		if other == item {
-			return append(l[:i], l[i+1:]...)
+func remove[T comparable](list []T, item T) []T {
+	temp := list[:0]
+	for _, listItem := range list {
+		if listItem != item {
+			temp = append(temp, listItem)
 		}
 	}
-	return l
+	// Optimize Performance -> Must be garbage collected anyway
+	clear(list[len(temp):])
+	return temp
 }

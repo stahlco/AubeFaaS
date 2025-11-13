@@ -192,6 +192,7 @@ func (s *server) deleteHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func (s *server) scaleHandler(w http.ResponseWriter, req *http.Request) {
+	log.Printf("received req to scale function")
 	if req.Method != http.MethodPost {
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -209,6 +210,8 @@ func (s *server) scaleHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	log.Printf("decoded req.Body to: %v", d)
+
 	ips, err := s.cp.Scale(d.FunctionName, d.Amount)
 	if err != nil && errors.Is(err, http.ErrMissingFile) {
 		log.Printf("handler with name: %s not found", d.FunctionName)
@@ -216,6 +219,8 @@ func (s *server) scaleHandler(w http.ResponseWriter, req *http.Request) {
 	} else if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
+
+	log.Printf("after calling Scale have following ips: %v", ips)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -226,8 +231,8 @@ func (s *server) scaleHandler(w http.ResponseWriter, req *http.Request) {
 		Ips: ips,
 	}
 
+	log.Printf("now encoding r, and passing it to the writer")
 	if err := json.NewEncoder(w).Encode(r); err != nil {
 		log.Printf("failed to encode response: %v", err)
 	}
-
 }
